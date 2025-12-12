@@ -1,7 +1,7 @@
 %
 % Created by Saurabh Tavildar on 3/23/16.
 %
-classdef PolarCode < handle
+classdef Polar < handle
     % Polar code
     properties
         
@@ -56,7 +56,7 @@ classdef PolarCode < handle
         
         
         %% code construction
-        function obj = PolarCode(block_length, info_length, design_epsilon, crc_size)
+        function obj = Polar(block_length, info_length, design_epsilon, crc_size)
             
             obj.block_length = block_length;
             obj.info_length = info_length;
@@ -75,7 +75,8 @@ classdef PolarCode < handle
             
             obj.bit_reversed_order = bitrevorder((1:obj.block_length)');
             
-            channels = PolarCode.calculate_channel_polarization(design_epsilon, obj.n );
+            channels = Polar.calculate_channel_polarization(design_epsilon, obj.n );
+            
             channels = channels(obj.bit_reversed_order);
             [~, info_bits_sorted] = sort(channels, 'ascend');
             obj.info_bit_order = info_bits_sorted(obj.block_length:-1:1);
@@ -83,7 +84,6 @@ classdef PolarCode < handle
             obj.frozen_bits(info_bits_sorted(1:obj.info_length + obj.crc_size)) = 0;
             obj.info_bits = info_bits_sorted(1:obj.info_length + obj.crc_size);
             obj.llr_based_computation = 0;
-            
             obj.cc_method = 'bhattacharya';
             obj.cc_parameter = design_epsilon;
             obj.cc_misc = '';
@@ -152,7 +152,7 @@ classdef PolarCode < handle
                 if strcmp(receiver, 'bicm')
                     
                     dummy_info = (rand(1, obj.block_length) < 0.5);
-                    dummy_coded = PolarCode.polar_encode(dummy_info);
+                    dummy_coded = Polar.polar_encode(dummy_info);
                     
                 elseif strcmp(receiver, 'mlc')
                     
@@ -160,7 +160,7 @@ classdef PolarCode < handle
                     dummy_info = (rand(num_codes, obj.block_length/num_codes) < 0.5);
                     dummy_coded = zeros(obj.block_length, 1);
                     for layer = 1 : num_codes
-                        dummy_coded(layer:num_codes:obj.block_length) = PolarCode.polar_encode(dummy_info(layer,:))';
+                        dummy_coded(layer:num_codes:obj.block_length) = Polar.polar_encode(dummy_info(layer,:))';
                     end
                     
                 end
@@ -175,7 +175,7 @@ classdef PolarCode < handle
                     p1 = 0.5 * ones(obj.block_length, 1);
                     eff_block_length = floor(obj.block_length/modulation.n_bits)*modulation.n_bits;
                     [p1(1:eff_block_length),~] = modulation.compute_llr_bicm(y, sigma^2);
-                    [~, ber_tmp] = PolarCode.polar_decode_monte(p1, dummy_info);
+                    [~, ber_tmp] = Polar.polar_decode_monte(p1, dummy_info);
                     num_err = num_err + ber_tmp';
                     
                 elseif strcmp(receiver, 'mlc')
@@ -186,7 +186,7 @@ classdef PolarCode < handle
                     for layer = 1 : num_codes
                         u = decoded_coded(:, 1:layer-1);
                         [p1,~] = modulation.compute_llr_mlc(y, sigma^2, u);
-                        [decoded_coded(:, layer), ber(:, layer)] = PolarCode.polar_decode_monte(p1, dummy_info(layer, :));
+                        [decoded_coded(:, layer), ber(:, layer)] = Polar.polar_decode_monte(p1, dummy_info(layer, :));
                     end
                     ber = ber(:);
                     num_err = num_err + ber;
@@ -271,7 +271,7 @@ classdef PolarCode < handle
                 info_bits = [info_bits, crc'];
             end
             info_bits_padded(obj.info_bits) = info_bits;
-            coded_bits = PolarCode.polar_encode(info_bits_padded);
+            coded_bits = Polar.polar_encode(info_bits_padded);
             
         end
         
@@ -289,7 +289,7 @@ classdef PolarCode < handle
         
         function decoded_bits = decode_sc_p1(obj, p1)
             
-            [decoded_bits, ~] = PolarCode.polar_decode(p1, obj.frozen_bits);
+            [decoded_bits, ~] = Polar.polar_decode(p1, obj.frozen_bits);
             decoded_bits = decoded_bits(obj.info_bits(1:obj.info_length));
             
         end
@@ -352,50 +352,51 @@ classdef PolarCode < handle
         
         function init_i_scl(obj)
             obj.lambda_offset = (2.^(obj.n - (0: obj.n)) - 1);
-            obj.list_offset = (0:obj.list_size)*(2 * obj.block_length - 1);
+            obj.list_offset = (0:obj.list_size*2)*(2 * obj.block_length - 1);
             
         end
         
         function initializeDataStructures(obj)
+    
+            % ИЗМЕНЕНИЕ: Выделяем в 2 раза больше слотов памяти, чем размер списка
+            mem_size = 2 * obj.list_size; 
             
-            obj.inactivePathIndices = zeros(obj.list_size,1);
+            obj.inactivePathIndices = zeros(mem_size, 1);
             obj.inactivePathIndicesSize = 0;
-            % the above two variables are used to define a stack
             
-            obj.activePathArray =  zeros(obj.list_size,1);
-            obj.pathIndexToArrayIndex = zeros(obj.n  + 1, obj.list_size);
+            obj.activePathArray =  zeros(mem_size, 1); 
+            obj.pathIndexToArrayIndex = zeros(obj.n  + 1, mem_size); 
             
-            obj.inactiveArrayIndices = zeros(obj.n  + 1, obj.list_size);
+            obj.inactiveArrayIndices = zeros(obj.n  + 1, mem_size); 
             obj.inactiveArrayIndicesSize = zeros(obj.n + 1, 1);
-            % the above two variables are used to define a vector of stacks
             
-            obj.arrayReferenceCount = zeros(obj.n  + 1, obj.list_size);
+            obj.arrayReferenceCount = zeros(obj.n  + 1, mem_size); 
             
             if obj.llr_based_computation
-                obj.llr_scl = zeros(obj.list_size * (2 * obj.block_length - 1), 1);
-                obj.llr_path_metric =  zeros(obj.list_size, 1);
+                obj.llr_scl = zeros(mem_size * (2 * obj.block_length - 1), 1);
+                obj.llr_path_metric =  zeros(mem_size, 1); % БЫЛО: obj.list_size
             else
-                obj.p_scl = zeros(obj.list_size * (2 * obj.block_length - 1), 2);
+                obj.p_scl = zeros(mem_size * (2 * obj.block_length - 1), 2);
             end
+
+            obj.c_scl = zeros(mem_size * (2 * obj.block_length - 1), 2);
+            obj.i_scl = zeros(mem_size, obj.block_length); % БЫЛО: obj.list_size
             
-            obj.c_scl = zeros(obj.list_size * (2 * obj.block_length - 1), 2);
-            obj.i_scl = zeros(obj.list_size, obj.block_length);
             obj.init_i_scl();
             
             for lambda = 0 : obj.n
-                for i_list = 0 : obj.list_size - 1
+                for i_list = 0 : mem_size - 1 
                     obj.inactiveArrayIndices(lambda + 1, i_list + 1) = i_list;
-                    
                 end
-                obj.inactiveArrayIndicesSize(lambda + 1) = obj.list_size;
+                obj.inactiveArrayIndicesSize(lambda + 1) = mem_size; % БЫЛО: obj.list_size
             end
-            
-            for i_list = 0 : obj.list_size - 1
+
+            for i_list = 0 : mem_size - 1
                 obj.activePathArray(i_list + 1) = 0;
                 obj.inactivePathIndices(i_list + 1) = i_list;
             end
             
-            obj.inactivePathIndicesSize  = obj.list_size;
+            obj.inactivePathIndicesSize  = mem_size; 
             
         end
         
@@ -479,6 +480,10 @@ classdef PolarCode < handle
             if obj.arrayReferenceCount(lambda + 1, s + 1) == 1
                 s_p = s;
             else
+                if obj.inactiveArrayIndicesSize(lambda + 1) == 0
+                    error('PolarCode:OutOfIndices', ...
+                          'Закончились неактивные индексы для lambda = %d. Попробуйте увеличить размер списка (L).', lambda);
+                end
                 s_p = obj.inactiveArrayIndices(lambda + 1, obj.inactiveArrayIndicesSize(lambda + 1));
                 i_s_p = obj.lambda_offset(lambda + 1) + obj.list_offset(s_p + 1) + 1: ...
                     obj.lambda_offset(lambda + 1) + obj.list_offset(s_p + 1) + 2^(m - lambda);
@@ -499,7 +504,7 @@ classdef PolarCode < handle
         
         
         function recursivelyCalcP_scl(obj, lambda, phi)
-            
+    
             if lambda == 0
                 return;
             end
@@ -510,9 +515,13 @@ classdef PolarCode < handle
             end
             
             sigma  = 0;
-            p_index_3_base_list = zeros(obj.list_size, 1);
-            l_index_1_list = zeros(obj.list_size, 1);
-            for l_index = 0 : obj.list_size - 1
+            % ИЗМЕНЕНИЕ: Используем реальный размер памяти для массивов
+            mem_size = length(obj.activePathArray); 
+            p_index_3_base_list = zeros(mem_size, 1);
+            l_index_1_list = zeros(mem_size, 1);
+            
+            % ИЗМЕНЕНИЕ: Цикл по всей памяти
+            for l_index = 0 : mem_size - 1
                 if obj.activePathArray(l_index + 1) == 0
                     continue;
                 end
@@ -530,9 +539,7 @@ classdef PolarCode < handle
                     if mod(phi, 2) == 0
                         if obj.llr_based_computation
                             if max( abs(obj.llr_scl ( p_index_1)), abs(obj.llr_scl ( p_index_2)) ) < 40
-                                obj.llr_scl(p_index_3) = PolarCode.cnop_llr( obj.llr_scl ( p_index_1), obj.llr_scl ( p_index_2));
-                                % log( (exp( obj.llr_scl ( p_index_1) + obj.llr_scl ( p_index_2)) + 1) ...
-                                %    /(exp( obj.llr_scl ( p_index_1))  + exp( obj.llr_scl ( p_index_2))) );
+                                obj.llr_scl(p_index_3) = Polar.cnop_llr( obj.llr_scl ( p_index_1), obj.llr_scl ( p_index_2));
                             else
                                 obj.llr_scl(p_index_3) = sign( obj.llr_scl ( p_index_1)) * sign(obj.llr_scl ( p_index_2)) * min(abs(obj.llr_scl ( p_index_2)), abs(obj.llr_scl ( p_index_1)));
                             end
@@ -558,8 +565,9 @@ classdef PolarCode < handle
                 end
             end
             
-            for l_index = 0 : obj.list_size - 1
-                if sigma == 0 %typically happens because of underflow
+            % ИЗМЕНЕНИЕ: Цикл по всей памяти
+            for l_index = 0 : mem_size - 1
+                if sigma == 0 
                     break;
                 end
                 if obj.activePathArray(l_index + 1) == 0
@@ -569,8 +577,7 @@ classdef PolarCode < handle
                 obj.p_scl(p_range, :) = obj.p_scl(p_range, :)/sigma;
             end
             
-        end
-        
+        end        
         
         function recursivelyUpdateC_scl(obj, lambda, phi)
             if mod(phi, 2) == 0
@@ -578,7 +585,9 @@ classdef PolarCode < handle
             end
             psi = floor(phi/2);
             
-            for l_index = 0 : obj.list_size - 1
+            % ИЗМЕНЕНИЕ: Используем mem_size и цикл по всей памяти
+            mem_size = length(obj.activePathArray);
+            for l_index = 0 : mem_size - 1
                 if obj.activePathArray(l_index + 1) == 0
                     continue;
                 end
@@ -603,11 +612,13 @@ classdef PolarCode < handle
                 obj.recursivelyUpdateC_scl(lambda - 1, psi);
             end
             
-        end
+        end   
         
         function continuePaths_FrozenBit(obj, phi)
             
-            for l_index = 0 : obj.list_size -1
+            % ИЗМЕНЕНИЕ: Используем mem_size и цикл по всей памяти
+            mem_size = length(obj.activePathArray);
+            for l_index = 0 : mem_size -1
                 
                 if obj.activePathArray(l_index + 1) == 0
                     continue;
@@ -622,18 +633,19 @@ classdef PolarCode < handle
             end
             
         end
-        
+     
         function    continuePaths_UnfrozenBit(obj, phi)
+    
+            % ИЗМЕНЕНИЕ: Размер массива и цикл по всей памяти
+            mem_size = length(obj.activePathArray);
+            probForks = -realmax * ones(mem_size, 2); 
             
-            probForks = -realmax * ones(obj.list_size, 2);
             index = 0;
-            for l_index = 0 : obj.list_size - 1
+            for l_index = 0 : mem_size - 1
                 
                 if obj.activePathArray(l_index + 1)
                     l_index_1 = obj.getArrayPointer_P(obj.n, l_index);
                     if obj.llr_based_computation
-                        % computing negative of path metric so that an
-                        % ascending order can be used for sorting
                         probForks(l_index + 1, 1) =  - (obj.llr_path_metric(l_index_1 + 1) ...
                             + log(1 + exp(-obj.llr_scl(obj.lambda_offset(obj.n + 1) + obj.list_offset(l_index_1 + 1) + 1))));
                         probForks(l_index + 1, 2) =  - ( obj.llr_path_metric(l_index_1 + 1) ...
@@ -647,13 +659,19 @@ classdef PolarCode < handle
                 end
             end
             
+            % Логика выбора лучших L путей остается прежней
             rho = min(2*index, obj.list_size);
-            contForks = zeros(obj.list_size, 2);
+            
+            % ИЗМЕНЕНИЕ: Размер массива под всю память
+            contForks = zeros(mem_size, 2);
+            
             prob = sort(probForks(:), 'descend');
             
             threshold = prob(rho);
             num_populated = 0;
-            for l_index = 0 : obj.list_size - 1
+            
+            % ИЗМЕНЕНИЕ: Цикл по всей памяти
+            for l_index = 0 : mem_size - 1
                 for j_index = 1 : 2
                     if num_populated == rho
                         break;
@@ -666,7 +684,7 @@ classdef PolarCode < handle
             end
             
             if num_populated < rho
-                for l_index = 0 : obj.list_size - 1
+                for l_index = 0 : mem_size - 1
                     for j_index = 1 : 2
                         if num_populated == rho
                             break;
@@ -679,8 +697,8 @@ classdef PolarCode < handle
                 end
             end
             
-            
-            for l_index = 0 : obj.list_size - 1
+            % ИЗМЕНЕНИЕ: Цикл по всей памяти
+            for l_index = 0 : mem_size - 1
                 if obj.activePathArray(l_index + 1) == 0
                     continue;
                 end
@@ -690,7 +708,8 @@ classdef PolarCode < handle
                 end
             end
             
-            for l_index = 0 : obj.list_size - 1
+            % ИЗМЕНЕНИЕ: Цикл по всей памяти
+            for l_index = 0 : mem_size - 1
                 if (contForks(l_index + 1, 1) == 0) && ( contForks(l_index + 1, 2) == 0)
                     continue;
                 end
@@ -742,7 +761,10 @@ classdef PolarCode < handle
                 p_max = realmax;
             end
             path_with_crc = 0;
-            for l_index = 0 : obj.list_size -1
+            
+            % ИЗМЕНЕНИЕ: Цикл по всей памяти
+            mem_size = length(obj.activePathArray);
+            for l_index = 0 : mem_size - 1
                 
                 if obj.activePathArray(l_index + 1) == 0
                     continue;
@@ -771,7 +793,7 @@ classdef PolarCode < handle
                 end
             end
             
-            if (crc_check) && (path_with_crc == 0) % no path with crc check found
+            if (crc_check) && (path_with_crc == 0) 
                 l_p_index = obj.findMostProbablePath(0);
             end
             
@@ -785,8 +807,8 @@ classdef PolarCode < handle
             num_block_err = zeros(length(ebno_vec), length(list_size_vec));
             num_bit_err = zeros(length(ebno_vec), length(list_size_vec));
             num_runs = zeros(length(ebno_vec), length(list_size_vec));
-            max_err = 50;
-            max_runs = 500;
+            max_err = 1000;
+            max_runs = 2000;
             
             for i_run = 1 : max_runs
                 
@@ -845,7 +867,7 @@ classdef PolarCode < handle
                 
             end
             bler = num_block_err./num_runs;
-            ber = num_bit_err./num_runs;
+            ber = num_bit_err./(num_runs * obj.info_length);
             
         end
         
@@ -862,7 +884,7 @@ classdef PolarCode < handle
             else
                 u1u2 = mod(info_bits_padded(1:2:end) + info_bits_padded(2:2:end) , 2);
                 u2 = info_bits_padded(2:2:end);
-                x = [PolarCode.polar_encode(u1u2) PolarCode.polar_encode(u2)];
+                x = [Polar.polar_encode(u1u2) Polar.polar_encode(u2)];
             end
             
         end
@@ -877,12 +899,12 @@ classdef PolarCode < handle
                 end
                 u = x;
             else
-                u1est = PolarCode.cnop(y(1:2:end),y(2:2:end));
-                [uhat1,u1hardprev] = PolarCode.polar_decode(u1est,f(1:N/2));
-                u2est = PolarCode.vnop(PolarCode.cnop(u1hardprev,y(1:2:end)),y(2:2:end));
-                [uhat2,u2hardprev] = PolarCode.polar_decode(u2est,f(N/2+1:end));
+                u1est = Polar.cnop(y(1:2:end),y(2:2:end));
+                [uhat1,u1hardprev] = Polar.polar_decode(u1est,f(1:N/2));
+                u2est = Polar.vnop(Polar.cnop(u1hardprev,y(1:2:end)),y(2:2:end));
+                [uhat2,u2hardprev] = Polar.polar_decode(u2est,f(N/2+1:end));
                 u = [uhat1 uhat2];
-                x = reshape([PolarCode.cnop(u1hardprev,u2hardprev); u2hardprev],1,[]);
+                x = reshape([Polar.cnop(u1hardprev,u2hardprev); u2hardprev],1,[]);
             end
         end
         
@@ -904,12 +926,12 @@ classdef PolarCode < handle
                 end
                 x = dummy_info;
             else
-                u1est = PolarCode.cnop(y(1:2:end),y(2:2:end));
-                [u1hardprev, ber1] = PolarCode.polar_decode_monte(u1est,dummy_info(1:N/2));
-                u2est = PolarCode.vnop(PolarCode.cnop(u1hardprev',y(1:2:end)),y(2:2:end));
-                [u2hardprev, ber2] = PolarCode.polar_decode_monte(u2est,dummy_info(N/2+1:end));
+                u1est = Polar.cnop(y(1:2:end),y(2:2:end));
+                [u1hardprev, ber1] = Polar.polar_decode_monte(u1est,dummy_info(1:N/2));
+                u2est = Polar.vnop(Polar.cnop(u1hardprev',y(1:2:end)),y(2:2:end));
+                [u2hardprev, ber2] = Polar.polar_decode_monte(u2est,dummy_info(N/2+1:end));
                 ber = [ber1 ber2];
-                x = reshape([PolarCode.cnop(u1hardprev,u2hardprev); u2hardprev],1,[]);
+                x = reshape([Polar.cnop(u1hardprev,u2hardprev); u2hardprev],1,[]);
             end
         end
         
@@ -919,12 +941,12 @@ classdef PolarCode < handle
                 u = y;
                 x = dummy_info;
             else
-                u1est = PolarCode.cnop(y(1:2:end),y(2:2:end));
-                [u1hardprev, u1] = PolarCode.polar_decode_capacity(u1est,dummy_info(1:N/2));
-                u2est = PolarCode.vnop(PolarCode.cnop(u1hardprev',y(1:2:end)),y(2:2:end));
-                [u2hardprev, u2] = PolarCode.polar_decode_capacity(u2est,dummy_info(N/2+1:end));
+                u1est = Polar.cnop(y(1:2:end),y(2:2:end));
+                [u1hardprev, u1] = Polar.polar_decode_capacity(u1est,dummy_info(1:N/2));
+                u2est = Polar.vnop(Polar.cnop(u1hardprev',y(1:2:end)),y(2:2:end));
+                [u2hardprev, u2] = Polar.polar_decode_capacity(u2est,dummy_info(N/2+1:end));
                 u = [u1 u2];
-                x = reshape([PolarCode.cnop(u1hardprev,u2hardprev); u2hardprev],1,[]);
+                x = reshape([Polar.cnop(u1hardprev,u2hardprev); u2hardprev],1,[]);
             end
         end
         
@@ -935,12 +957,12 @@ classdef PolarCode < handle
                 u = y;
                 x = dummy_info;
             else
-                u1est = PolarCode.cnop_llr(y(1:2:end),y(2:2:end));
-                [u1hardprev, u1] = PolarCode.polar_decode_capacity_llr(u1est,dummy_info(1:N/2));
-                u2est = PolarCode.vnop_llr((1 - 2*u1hardprev').*y(1:2:end),y(2:2:end));
-                [u2hardprev, u2] = PolarCode.polar_decode_capacity_llr(u2est,dummy_info(N/2+1:end));
+                u1est = Polar.cnop_llr(y(1:2:end),y(2:2:end));
+                [u1hardprev, u1] = Polar.polar_decode_capacity_llr(u1est,dummy_info(1:N/2));
+                u2est = Polar.vnop_llr((1 - 2*u1hardprev').*y(1:2:end),y(2:2:end));
+                [u2hardprev, u2] = Polar.polar_decode_capacity_llr(u2est,dummy_info(N/2+1:end));
                 u = [u1 u2];
-                x = reshape([PolarCode.cnop(u1hardprev,u2hardprev); u2hardprev],1,[]);
+                x = reshape([Polar.cnop(u1hardprev,u2hardprev); u2hardprev],1,[]);
             end
         end
         
