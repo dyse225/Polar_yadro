@@ -802,31 +802,65 @@ classdef Polar < handle
         %% helper function
         function [ bler, ber ] = get_bler_quick(obj, ebno_vec, list_size_vec)
             
-            snr_db_vec = ebno_vec + 10*log10(obj.info_length/obj.block_length);
+            % Кодовая скорость R = K / N
+            code_rate = obj.info_length / obj.block_length;
             
             num_block_err = zeros(length(ebno_vec), length(list_size_vec));
             num_bit_err = zeros(length(ebno_vec), length(list_size_vec));
             num_runs = zeros(length(ebno_vec), length(list_size_vec));
-            max_err = 1000;
-            max_runs = 2000;
+            
+            % Параметры остановки симуляции
+            max_err = 500;    % Можно уменьшить для скорости, например до 100
+            max_runs = 20000; % Максимальное число блоков
             
             for i_run = 1 : max_runs
                 
-                if mod(i_run, ceil(max_runs/10)) == 1
+                if mod(i_run, 100) == 1
                     disp(['Sim iteration running = ', num2str(i_run)]);
                 end
+                
+                % 1. Генерация данных и кодирование
                 info = rand(1 , obj.info_length) < 0.5;
                 coded_bits = obj.encode(info);
-                bpsk = 2 * coded_bits - 1;
-                sigma = sqrt(1/2);
-                noise = sigma * randn(1, obj.block_length);
+                
+                % 2. Модуляция BPSK: 0 -> -1, 1 -> +1 (амплитуда сигнала = 1)
+                % Обратите внимание: сигнал НЕ масштабируем по мощности здесь
+                bpsk = 2 * coded_bits - 1; 
+                
+                % Вектор для проверки "Genie-aided" (для ускорения)
                 prev_decoded = zeros(length(list_size_vec), length(ebno_vec));
                 
                 for i_ebno = 1 : length(ebno_vec)
-                    snr_db = snr_db_vec(i_ebno);
-                    received_bits = 10^(snr_db/20) * bpsk + noise;
-                    p1 = exp(-(received_bits - 10^(snr_db/20)).^2/(2 * sigma^2))/sigma/sqrt(2*pi);
-                    p0 = exp(-(received_bits + 10^(snr_db/20)).^2/(2 * sigma^2))/sigma/sqrt(2*pi);
+                    
+                    % %%% ИЗМЕНЕНИЕ: Правильный расчет шума через Eb/N0 %%%
+                    
+                    % Переводим Eb/N0 из дБ в разы
+                    ebno_lin = 10^(ebno_vec(i_ebno)/10);
+                    
+                    % Считаем дисперсию шума sigma^2 = N0/2
+                    % Формула: sigma = sqrt( 1 / (2 * R * EbNo) )
+                    sigma = sqrt(1 / (2 * code_rate * ebno_lin));
+                    
+                    % Генерируем шум с рассчитанной дисперсией
+                    noise = sigma * randn(1, obj.block_length);
+                    
+                    % Принятый сигнал: y = x + n
+                    received_bits = bpsk + noise;
+                    
+                    % %%% Расчет вероятностей (LLR) %%%
+                    % Так как сигнал +/-1, формулы для гауссова распределения:
+                    % p(y|x=+1) ~ exp(-(y-1)^2 / 2sigma^2)
+                    % p(y|x=-1) ~ exp(-(y+1)^2 / 2sigma^2)
+                    
+%                     % p1 соответствует биту 1 (x = +1)
+%                     p1 = exp(-(received_bits - 1).^2 / (2 * sigma^2));
+%                     % p0 соответствует биту 0 (x = -1)
+%                     p0 = exp(-(received_bits + 1).^2 / (2 * sigma^2));
+                    
+                    % Избегаем деления на ноль или NaN (нормировка не обязательна для SCL_LLR, но нужна для SC)
+                    % p_sum = p1 + p0;
+                    % p1 = p1 ./ p_sum;
+                    % p0 = p0 ./ p_sum;
                     
                     for i_list = 1 : length(list_size_vec)
                         if num_block_err(i_ebno, i_list) > max_err
@@ -835,39 +869,43 @@ classdef Polar < handle
                         
                         num_runs(i_ebno,  i_list) =  num_runs(i_ebno, i_list) + 1;
                         
+                        % Оптимизация: если декодировали на меньшем SNR, считаем что и тут декодируем
                         run_sim = 1;
+%                         for i_ebno2 = 1 : i_ebno
+%                             if prev_decoded(i_list, i_ebno2)
+%                                 run_sim = 0;
+%                             end
+%                         end
+%                         if (run_sim == 0)
+%                             continue;
+%                         end
                         
-                        for i_ebno2 = 1 : i_ebno
-                            if prev_decoded(i_list, i_ebno2)
-                                run_sim = 0;
-                            end
-                        end
-                        
-                        if (run_sim == 0)
-                            % This is a hack to speed up simulations --
-                            % it assumes that this run will be decoded correctly since it was
-                            % decoded correctly for a lower EbNo
-                            continue;
-                        end
+                        % Декодирование
                         if list_size_vec(i_list) == 1
-                            decoded_bits = obj.decode_sc_p1(p1./(p1+p0));
+                             % Для SC передаем вероятности
+                            decoded_bits = obj.decode_sc_p1(p1 ./ (p1 + p0));
                         else
-                            %  decoded_bits = obj.decode_scl_p1(p1, p0, list_size_vec(i_list));
-                            decoded_bits = obj.decode_scl_llr(log(p0./p1), list_size_vec(i_list));
+                            % Для SCL передаем LLR
+                            % LLR = ln(P(x=0)/P(x=1)) = ln(p0/p1)
+                            % При BPSK и AWGN: LLR = 2*y / sigma^2
+                            % Но можно использовать и логарифм отношений вероятностей:
+                            llr_input = -2 * received_bits / (sigma^2);
+                            decoded_bits = obj.decode_scl_llr(llr_input, list_size_vec(i_list));
                         end
+                        
                         err = any(info ~= decoded_bits);
                         if err
                             num_block_err(i_ebno, i_list) =  num_block_err(i_ebno, i_list) + 1;
                             num_bit_err(i_ebno, i_list) = num_bit_err(i_ebno, i_list) + sum(info ~= decoded_bits);
-                        else
-                            prev_decoded(i_list, i_ebno) = 1;
+%                         else
+%                             prev_decoded(i_list, i_ebno) = 1;
                         end
                     end
                 end
                 
             end
-            bler = num_block_err./num_runs;
-            ber = num_bit_err./(num_runs * obj.info_length);
+            bler = num_block_err ./ num_runs;
+            ber = num_bit_err ./ (num_runs * obj.info_length);
             
         end
         
